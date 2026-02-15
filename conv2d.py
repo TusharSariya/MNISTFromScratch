@@ -1,49 +1,28 @@
 from torchvision import datasets, transforms
 import numpy as np
 import torch.nn as nn
+from pyinstrument import Profiler
+import keras
+
 
 
 # Load data
-transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-train_data = datasets.MNIST("data", train=True, download=True, transform=transform)
-test_data = datasets.MNIST("data", train=False, transform=transform)
-print("-----------------------------")
-print("1")
-print(test_data) # all data
-print("-----------------------------")
-print("2")
-print(test_data[0]) # -> tensor, int
-print("-----------------------------")
-print("3")
-print(test_data[0][0]) # -> tensor
-print("-----------------------------")
-print("4")
-print(test_data[0][0][0]) # -> first (and only) chanel
-print("-----------------------------")
-print("5")
-print(test_data[0][0][0][0].shape) 
-print(test_data[0][0][0][0]) # first row
-print("-----------------------------")
-print("6")
-print(test_data[0][0][0][0][0].shape) 
-print(test_data[0][0][0][0][0]) # first px
+(x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+
+#0-1
+x_train = x_train.astype("float32") / 255.0
+x_test = x_test.astype("float32") / 255.0
+
+#add a chanel dimention, 1 chanel
+x_train = np.expand_dims(x_train, -1)  # (60000, 28, 28, 1)
+x_test = np.expand_dims(x_test, -1)
 
 test_data_list = []
 
-for i in range(len(test_data)):
-    img, label = test_data[i]
-    test_data_list.append((label, img[0]))
+for i in range(len(x_test)):
+    test_data_list.append((y_test[i], x_test[i]))
 
 kernels_32 = np.random.randn(32, 1, 3, 3) * 0.1 
-print("-----------------------------")
-print("7")
-print(kernels_32)
-
-conv1 = nn.Conv2d(1, 32, 3)
-print("-----------------------------")
-print("8")
-print(conv1)
-print(conv1.weight[0])
 
 
 
@@ -69,10 +48,12 @@ def conv2d_forward(input):
 
     return conv2d32_out
 
+profiler = Profiler()
+profiler.start()
+
 conv2d32_out = conv2d_forward(test_data_list)
-print("-----------------------------")
-print("9")
-print(conv2d32_out)
+profiler.stop()
+profiler.print()
 
 
 # iterate over all images
