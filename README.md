@@ -1,6 +1,8 @@
-# MNIST Digit Classification
+# MNIST CNN From Scratch
 
-A convolutional neural network for handwritten digit recognition using Keras with a PyTorch backend.
+Implementing a convolutional neural network for handwritten digit recognition as close to the metal as possible. Starting from high-level frameworks (Keras, PyTorch) and working down to raw numpy, hand-written convolutions, and understanding the CPU-level optimizations that make it all fast.
+
+AI-assisted for documentation and reference material, but the implementation logic is human-written.
 
 ## Model Architecture
 
@@ -8,18 +10,50 @@ A convolutional neural network for handwritten digit recognition using Keras wit
 - Conv2D(64, 3x3) → MaxPool(2x2)
 - Flatten → Dropout(0.5) → Dense(10, softmax)
 
+Trained with Adam optimizer, cross-entropy loss, batch size 128, 5 epochs on MNIST (60k train / 10k test). Expects ~99% accuracy.
+
+## Repo Structure
+
+```
+implementations/
+├── keras_mnist.py        # High-level Keras implementation (~48 lines)
+├── pytorch_mnist.py      # Explicit PyTorch implementation (~75 lines)
+├── conv2d.py             # Naive conv2d forward pass with nested loops
+└── conv2dim2col.py       # Conv2d using im2col + matmul
+
+docs/
+├── layers/               # What each layer does (math, shapes, forward pass)
+│   ├── conv2d.md
+│   ├── maxpooling2d.md
+│   ├── dense.md
+│   ├── flatten.md
+│   └── dropout.md
+├── training/             # How the network learns
+│   ├── adam-optimizer.md
+│   ├── backprop-chain.md
+│   └── numerical-stability.md
+├── low-level/            # What happens under the hood
+│   ├── conv2d-backward.md
+│   ├── raw-cuda-c.md
+│   ├── matmul.md
+│   ├── matmul-cpu.md
+│   └── matmul-cpu-fun-stuff.md
+└── tooling/
+    └── profiling.md
+```
+
 ## Setup
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install keras torch torchvision
+pip install keras torch torchvision numpy pyinstrument
 ```
 
 ## Usage
 
 ```bash
-python mnist.py
+python implementations/keras_mnist.py      # high-level baseline
+python implementations/pytorch_mnist.py    # explicit baseline
+python implementations/conv2dim2col.py     # numpy im2col implementation
 ```
-
-Trains for 5 epochs on the MNIST dataset (60k train / 10k test images) and prints test accuracy. Expects ~99% accuracy.
