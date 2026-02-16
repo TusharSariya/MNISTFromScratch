@@ -29,6 +29,8 @@ kernels_64 = np.random.randn(64, 32, 3, 3) * 0.1
 # 288X64
 kernels_64 = kernels_64.reshape(64,288).T
 
+# val = W*x+B
+#1600X10 values magic for weight
 dense_w = np.random.randn(1600, 10) * np.sqrt(2.0 / 1600)                        
 dense_b = np.zeros(10)
 
@@ -136,6 +138,9 @@ def dense(input, weights, bias):
 
 def softmax(input):
     # subtract max for numerical stability (prevents exp overflow)
+    #substract max val
+    #then e^x for every value in the array, e^x because its derrevative and integral are the same
+    #then normalize again
     e = np.exp(input - np.max(input))
     return e / e.sum()
 
