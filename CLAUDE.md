@@ -33,7 +33,7 @@ implementations/
 
 docs/                 # Reference material (AI-generated)
   layers/             # What each layer does (conv2d, maxpooling, relu, dense, flatten, dropout)
-  training/           # Adam optimizer, backprop chain rule, numerical stability
+  training/           # Adam optimizer, backprop chain rule, numerical stability, cross-entropy loss
   low-level/          # conv2d backward, im2col, matmul, SIMD/tiling, CUDA/C
   tooling/            # Profiling (pyinstrument, flamegraphs)
 
@@ -44,17 +44,17 @@ architecture.md       # Full implementation blueprint — all phases, function s
 
 The project follows the phased plan in `architecture.md`. Status:
 
-- **Done**: Data loading (via keras.datasets.mnist), single-channel conv2d forward (im2col), relu, maxpooling (fast version using as_strided)
-- **Broken**: Multi-channel conv2d forward in `full.py` — the second conv (32→64 channels) doesn't work yet
-- **Not started**: Backward passes, loss function, optimizer, training loop, evaluation
+- **Done**: Full forward pass end-to-end — data loading, one-hot encoding, generic multi-channel conv2d (im2col), relu, maxpooling, flatten, dropout, dense, softmax, cross-entropy loss
+- **Not started**: Backward passes, optimizer (Adam), training loop, evaluation
 
-`full.py` is the active working file. It has the forward pipeline: conv2d_forward → relu → maxpooling2dbutfast → (second conv2d — broken).
+`full.py` is the active working file. The complete forward pipeline runs:
+conv2d → relu → maxpool → conv2d → relu → maxpool → flatten → dropout → dense → softmax → cross-entropy loss
 
 ## Key Technical Details
 
 - **im2col trick**: Reorganizes conv input into a matrix so convolution becomes matmul. Uses `np.lib.stride_tricks.as_strided` for zero-copy patch extraction, then reshape + `@` for BLAS-optimized matmul.
 - **Single-channel kernel shape**: `(32, 1, 3, 3)` reshaped to `(9, 32)` for matmul.
-- **Multi-channel kernel shape**: `(64, 32, 3, 3)` reshaped to `(9, 32, 64)` — this is where the current implementation gets stuck.
+- **Multi-channel kernel shape**: `(64, 32, 3, 3)` reshaped to `(288, 64)` for matmul. Uses 5D as_strided with strides `(s[1], s[2], s[0], s[1], s[2])` to extract `(H_out, W_out, C_in, 3, 3)` patches.
 - **MaxPool**: Uses `as_strided` to create `(C, H/2, W/2, 2, 2)` view, then `np.max` over last two axes.
 - Data loaded via `keras.datasets.mnist.load_data()` (returns numpy arrays directly, faster than torchvision).
 
