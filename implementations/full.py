@@ -34,6 +34,15 @@ kernels_64 = kernels_64.reshape(64,288).T
 dense_w = np.random.randn(1600, 10) * np.sqrt(2.0 / 1600)                        
 dense_b = np.zeros(10)
 
+def to_one_hot_batch(labels, num_classes=10):
+      one_hot = np.zeros((len(labels), num_classes))
+      one_hot[np.arange(len(labels)), labels] = 1.0
+      return one_hot
+
+
+y_train_one_hot = to_one_hot_batch(y_train)
+y_test_one_hot = to_one_hot_batch(y_test)
+
 #kernel
 # first -> 9X32
 #second -> 288X64
@@ -144,6 +153,11 @@ def softmax(input):
     e = np.exp(input - np.max(input))
     return e / e.sum()
 
+def cross_entropy_loss(prediction, target):
+    # clip to avoid log(0) = -inf
+    prediction = np.clip(prediction, 1e-7, 1 - 1e-7)
+    return -np.sum(target * np.log(prediction))
+
 
 
 t0 = time.time()
@@ -192,9 +206,16 @@ predictions = [softmax(img) for img in logits]
 t11 = time.time()
 print(f"softmax:        {t11 - t10:.3f}s")
 
-print(f"total:          {t11 - t0:.3f}s")
+# cross entropy loss per image, then average
+losses = [cross_entropy_loss(predictions[i], y_test_one_hot[i]) for i in range(len(predictions))]
+avg_loss = np.mean(losses)
+t12 = time.time()
+print(f"cross_entropy:  {t12 - t11:.3f}s")
+
+print(f"total:          {t12 - t0:.3f}s")
 
 # check output for first image
 print(f"\nprediction: {np.argmax(predictions[0])}, actual: {y_test[0]}")
 print(f"probabilities: {predictions[0]}")
+print(f"avg loss: {avg_loss:.4f}")
 
