@@ -30,23 +30,25 @@ for i in range(len(x_test)):
     flattened1 = np.lib.stride_tricks.as_strided(x_test[i],(26,26,3,3),(s[0], s[1], s[0], s[1]))
     #this actually coppies memory as kernel is 3x3 and stride is 1 so there is overlap
     #reshape collapses from the right so 3 then 3 then 26 then 26
+    #676x9
     flattened2 = flattened1.reshape(676,9)
     test_data_list.append((y_test[i], flattened2))
 
 
 #32 filter of 1 channel 3x3 kernel
 kernels_32 = np.random.randn(32, 1, 3, 3) * 0.1 
+#one matrix with 32 rows 9 columns, one col for each kernel ( 32x9).T -> 9x32
 kernels_32 = kernels_32.reshape(32,9).T
 
-#literally so slow, the heat death of the universe will come before this
 def conv2d_forward(input):
     conv2d32_out = []
     counter = 1
     for label, image in input: #iterate over all image
         print(counter)
         counter = counter + 1
-        #hyper optimized BLAS code with @
+        #np optimized BLAS code with @
         #uses SIMD
+        #676X9 * 9X32 -> 676X32.T -> 32X676 -> 32X26X26
         new = (image @ kernels_32).T.reshape(32,26,26)
         conv2d32_out.append((label,new))
 
@@ -59,12 +61,6 @@ conv2d32_out = conv2d_forward(test_data_list)
 profiler.stop()
 profiler.print()
 
-
-# iterate over all images
-# first image is your input
-#iterate over all filters
-#convolve all filter
-#output from one filter is the input to the next
     
 
 
