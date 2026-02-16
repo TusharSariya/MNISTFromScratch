@@ -1,14 +1,10 @@
-from torchvision import datasets, transforms
 import numpy as np
-import torch.nn as nn
-from pyinstrument import Profiler
 import keras
 import math
 import time
 
-np.set_printoptions(threshold=np.inf)     
+# ============ Phase 1: Data Loading ============
 
-# Load data
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 
 #0-1
@@ -17,205 +13,309 @@ x_test = x_test.astype("float32") / 255.0
 
 #add a chanel dimention, 1 chanel
 x_train = np.expand_dims(x_train, 1)  # (60000, 1, 28, 28)
-x_test = np.expand_dims(x_test, 1)
-
-# 32X1X3X3
-kernels_32 = np.random.randn(32, 1, 3, 3) * 0.1 
-# 9X32
-kernels_32 = kernels_32.reshape(32,9).T
-
-#wtf 32 chanels?
-kernels_64 = np.random.randn(64, 32, 3, 3) * 0.1 
-# 288X64
-kernels_64 = kernels_64.reshape(64,288).T
-
-# val = W*x+B
-#1600X10 values magic for weight
-dense_w = np.random.randn(1600, 10) * np.sqrt(2.0 / 1600)                        
-dense_b = np.zeros(10)
+x_test = np.expand_dims(x_test, 1)    # (10000, 1, 28, 28)
 
 def to_one_hot_batch(labels, num_classes=10):
-      one_hot = np.zeros((len(labels), num_classes))
-      one_hot[np.arange(len(labels)), labels] = 1.0
-      return one_hot
-
+    one_hot = np.zeros((len(labels), num_classes))
+    one_hot[np.arange(len(labels)), labels] = 1.0
+    return one_hot
 
 y_train_one_hot = to_one_hot_batch(y_train)
 y_test_one_hot = to_one_hot_batch(y_test)
 
-#kernel
-# first -> 9X32
-#second -> 288X64
-#x_test
-# first -> 28X28
-#second -> 32X13X13
+# ============ Phase 6: Weight Initialization ============
 
+# He init for conv layers (followed by ReLU)
+# fan_in = C_in * K * K
+conv1_w = np.random.randn(32, 1, 3, 3) * np.sqrt(2.0 / 9)
+conv1_w = conv1_w.reshape(32, 9).T      # (9, 32)
 
-def conv2d_forward(y_test,x_test,kernel):
-    x_flattened = []
-    #in the first iteration for Mat Mul the inner dimentions are 9 (3X3) because we do one filter
-    #in the second iteration we have 32 chanels on input so it is 288 (32X3X3)
-    print(x_test[0].shape)
-    s = x_test[0].strides
-    print(s)
-    for i in range(len(x_test)):
-        s = x_test[i].strides
+conv2_w = np.random.randn(64, 32, 3, 3) * np.sqrt(2.0 / 288)
+conv2_w = conv2_w.reshape(64, 288).T    # (288, 64)
 
-        #to make convolutions efficient MatMuls we want to do a magic (memeory) trick with pointers
-        # first -> 1X28X28 -> 26X26X1X3X3 stride 1 so there is overlap
-        #second -> 32X13X13 -> 11X11X32X3X3
-        #had to use AI to help with strides magic
-        flattened1 = np.lib.stride_tricks.as_strided(                                   
-            x_test[i],
-            (x_test[i].shape[1]-2, x_test[i].shape[2]-2, x_test[i].shape[0], 3, 3),
-            (s[1], s[2], s[0], s[1], s[2])
-        )
+# Xavier init for dense layer (followed by softmax, not ReLU)
+dense_w = np.random.randn(1600, 10) * np.sqrt(2.0 / (1600 + 10))
+dense_b = np.zeros(10)
 
+# ============ Phase 2: Forward Functions ============
 
-        #we want to flatten it completely for MatMul
-        # first -> 26X26X3X3 -> 676X9
-        #second -> 11X11X32X3X3 -> 121X288
-        #had to use AI to help with strides magic
-        x_flattened.append(flattened1.reshape(
-            (x_test[i].shape[1]-2) * (x_test[i].shape[2]-2),
-            x_test[i].shape[0] * 9)
-        )
+def im2col(input, K=3):
+    # input: (C_in, H, W) -> patches: (H_out * W_out, C_in * K * K)
+    C_in, H, W = input.shape
+    H_out = H - K + 1
+    W_out = W - K + 1
+    s = input.strides
+    view = np.lib.stride_tricks.as_strided(
+        input,
+        (H_out, W_out, C_in, K, K),
+        (s[1], s[2], s[0], s[1], s[2])
+    )
+    return view.reshape(H_out * W_out, C_in * K * K)
 
+def conv2d_forward(input, kernel):
+    # input: (C_in, H, W), kernel: (C_in*K*K, C_out)
+    # output: (C_out, H_out, W_out)
+    C_in, H, W = input.shape
+    K = int(math.sqrt(kernel.shape[0] / C_in))
+    H_out = H - K + 1
+    W_out = W - K + 1
+    patches = im2col(input, K)
+    # save patches (copy! as_strided shares memory) and input shape for backward
+    output = (patches @ kernel).T.reshape(kernel.shape[1], H_out, W_out)
+    return output, patches.copy(), input.shape
 
-    #kernels
-    # first -> 9X32
-    #second -> 288X64
-    
-    conv2d32_out = []
-    output_dim = int(math.sqrt(len(x_flattened[1])))
-    for i in range(len(x_flattened)):
-        label = y_test[i]
-        image = x_flattened[i]
-        new = (image @ kernel).T.reshape(kernel.shape[1],output_dim,output_dim)
-        conv2d32_out.append(new)
+def relu_forward(input):
+    mask = input > 0
+    return input * mask, mask
 
-    return conv2d32_out
+def maxpool_forward(input, pool_size=2):
+    # input: (C, H, W) -> output: (C, H//pool, W//pool)
+    C, H, W = input.shape
+    H_out = H // pool_size
+    W_out = W // pool_size
+    s = input.strides
+    view = np.lib.stride_tricks.as_strided(input,
+        (C, H_out, W_out, pool_size, pool_size),
+        (s[0], s[1]*pool_size, s[2]*pool_size, s[1], s[2]))
+    output = np.max(view, axis=(3, 4))
+    # save which element was max in each window (for backward)
+    max_mask = (view == output[:, :, :, None, None])
+    return output, max_mask, (C, H, W)
 
-def relu(input):
-    return [np.maximum(0,img) for img in input]
+def flatten_forward(input):
+    return input.reshape(-1), input.shape
 
-def maxpooling2d(input):
-    output = []
-    for label, image in input:
-        this_image = []
-        for kernel in image:
-            this_kernel = []
-            for j in range(0,len(kernel),2):
-                rows = []
-                for i in range(0,len(kernel[0]),2):
-                    maximum = max(kernel[j][i],kernel[j+1][i],kernel[j][i+1],kernel[j+1][i+1])
-                    rows.append(maximum)
-                this_kernel.append(rows)
-            this_image.append(this_kernel)
-        output.append((label,this_image))
-    return output
-
-
-# list of tuples of label and kernels
-# kernels 32X26X26 32 kernels 26X26 dim
-def maxpooling2dbutfast(input):
-      output = []
-      for img in input:
-          s = img.strides
-          view = np.lib.stride_tricks.as_strided(img,
-              (img.shape[0], img.shape[1]//2, img.shape[2]//2, 2, 2),
-              (s[0], s[1]*2, s[2]*2, s[1], s[2]))
-          pooled = np.max(view, axis=(3, 4))
-          output.append(pooled)
-      return output
-
-def flatten(input):
-    #takes a multiudimentional array and returns a flattened version of it
-    return input.reshape(-1)
-
-# dropout
-def dropout(input, rate=0.5, training=True):                                     
-    if not training:                                                                                  
-        return input   
-    #creates random numbers between zero and one for the size of input, filter by rate
+def dropout_forward(input, rate=0.5, training=True):
+    if not training:
+        return input, None
     mask = np.random.rand(*input.shape) > rate
-    return input * mask / (1 - rate)
+    return input * mask / (1 - rate), mask
 
-def dense(input, weights, bias):
+def dense_forward(input, weights, bias):
     # (1600,) @ (1600, 10) + (10,) -> (10,)
-    return input @ weights + bias
+    return input @ weights + bias, input.copy()
 
 def softmax(input):
-    # subtract max for numerical stability (prevents exp overflow)
-    #substract max val
-    #then e^x for every value in the array, e^x because its derrevative and integral are the same
-    #then normalize again
+    # subtract max for numerical stability
     e = np.exp(input - np.max(input))
     return e / e.sum()
 
+# ============ Phase 3: Loss ============
+
 def cross_entropy_loss(prediction, target):
-    # clip to avoid log(0) = -inf
     prediction = np.clip(prediction, 1e-7, 1 - 1e-7)
     return -np.sum(target * np.log(prediction))
 
+def cross_entropy_gradient(prediction, target):
+    # softmax + cross-entropy combined: dL/d(logits) = predictions - targets
+    return prediction - target
 
+# ============ Phase 4: Backward Functions ============
+
+def col2im(cols, input_shape, K=3):
+    # reverse of im2col: scatter and accumulate overlapping patches back
+    # cols: (H_out * W_out, C_in * K * K) -> output: (C_in, H, W)
+    C_in, H, W = input_shape
+    H_out = H - K + 1
+    W_out = W - K + 1
+    cols_reshaped = cols.reshape(H_out, W_out, C_in, K, K)
+    dinput = np.zeros((C_in, H, W))
+    for y in range(H_out):
+        for x in range(W_out):
+            dinput[:, y:y+K, x:x+K] += cols_reshaped[y, x]
+    return dinput
+
+def conv2d_backward(upstream_grad, saved_patches, input_shape, kernel):
+    # upstream_grad: (C_out, H_out, W_out)
+    # returns: dinput, dkernel
+    C_out, H_out, W_out = upstream_grad.shape
+    grad_2d = upstream_grad.reshape(C_out, H_out * W_out).T  # (H_out*W_out, C_out)
+
+    # dkernel: how much each weight contributed to the loss
+    # patches.T @ grad_2d = (C_in*K*K, H_out*W_out) @ (H_out*W_out, C_out) = (C_in*K*K, C_out)
+    dkernel = saved_patches.T @ grad_2d
+
+    # dpatches: gradient flowing back to the im2col patches
+    # grad_2d @ kernel.T = (H_out*W_out, C_out) @ (C_out, C_in*K*K) = (H_out*W_out, C_in*K*K)
+    dpatches = grad_2d @ kernel.T
+
+    # col2im: scatter patch gradients back to the original input positions
+    # overlapping patches accumulate (this is why col2im sums)
+    C_in = input_shape[0]
+    K = int(math.sqrt(kernel.shape[0] / C_in))
+    dinput = col2im(dpatches, input_shape, K)
+    return dinput, dkernel
+
+def relu_backward(upstream_grad, mask):
+    # gradient flows through where input was positive, blocked where negative
+    return upstream_grad * mask
+
+def maxpool_backward(upstream_grad, max_mask, input_shape, pool_size=2):
+    # route gradient to where the max was in each pool window
+    C, H, W = input_shape
+    H_out = H // pool_size
+    W_out = W // pool_size
+    # broadcast gradient to max positions, zero everywhere else
+    grad_expanded = upstream_grad[:, :, :, None, None] * max_mask
+    # reshape back: (C, H_out, pool, W_out, pool) -> (C, H_out*pool, W_out*pool)
+    dinput_small = grad_expanded.transpose(0, 1, 3, 2, 4).reshape(C, H_out * pool_size, W_out * pool_size)
+    # if H or W was odd, the last row/col was never pooled — gets zero gradient
+    dinput = np.zeros((C, H, W))
+    dinput[:, :H_out*pool_size, :W_out*pool_size] = dinput_small
+    return dinput
+
+def flatten_backward(upstream_grad, original_shape):
+    return upstream_grad.reshape(original_shape)
+
+def dropout_backward(upstream_grad, mask, rate=0.5):
+    if mask is None:
+        return upstream_grad
+    # same mask, same scaling as forward
+    return upstream_grad * mask / (1 - rate)
+
+def dense_backward(upstream_grad, saved_input, weights):
+    # upstream_grad: (10,), saved_input: (1600,), weights: (1600, 10)
+    # dweights: outer product of input and gradient
+    dweights = np.outer(saved_input, upstream_grad)  # (1600, 10)
+    dbias = upstream_grad.copy()                      # (10,)
+    # dinput: pass gradient back through the weights
+    dinput = weights @ upstream_grad                   # (1600, 10) @ (10,) = (1600,)
+    return dinput, dweights, dbias
+
+# ============ Phase 5: Adam Optimizer ============
+
+def adam_init(params):
+    return {
+        't': 0,
+        'm': [np.zeros_like(p) for p in params],
+        'v': [np.zeros_like(p) for p in params],
+    }
+
+def adam_step(params, grads, state, lr=0.001, beta1=0.9, beta2=0.999, epsilon=1e-7):
+    state['t'] += 1
+    t = state['t']
+    for i in range(len(params)):
+        state['m'][i] = beta1 * state['m'][i] + (1 - beta1) * grads[i]
+        state['v'][i] = beta2 * state['v'][i] + (1 - beta2) * grads[i]**2
+        m_hat = state['m'][i] / (1 - beta1**t)
+        v_hat = state['v'][i] / (1 - beta2**t)
+        params[i] -= lr * m_hat / (np.sqrt(v_hat) + epsilon)
+
+# ============ Phase 7: Full Forward Pass ============
+
+def full_forward(image, conv1_w, conv2_w, dense_w, dense_b, training=True):
+    saved = {}
+
+    h, saved['patches1'], saved['shape1'] = conv2d_forward(image, conv1_w)
+    h, saved['relu_mask1'] = relu_forward(h)
+    h, saved['pool_mask1'], saved['pool_shape1'] = maxpool_forward(h)
+
+    h, saved['patches2'], saved['shape2'] = conv2d_forward(h, conv2_w)
+    h, saved['relu_mask2'] = relu_forward(h)
+    h, saved['pool_mask2'], saved['pool_shape2'] = maxpool_forward(h)
+
+    h, saved['flatten_shape'] = flatten_forward(h)
+    h, saved['dropout_mask'] = dropout_forward(h, training=training)
+    h, saved['dense_input'] = dense_forward(h, dense_w, dense_b)
+    h = softmax(h)
+
+    return h, saved
+
+# ============ Phase 8: Full Backward Pass ============
+
+def full_backward(predictions, target, saved, conv1_w, conv2_w, dense_w):
+    # start: dL/d(logits) = predictions - targets
+    grad = cross_entropy_gradient(predictions, target)
+
+    # walk backwards through every layer
+    grad, dW_dense, db_dense = dense_backward(grad, saved['dense_input'], dense_w)
+    grad = dropout_backward(grad, saved['dropout_mask'])
+    grad = flatten_backward(grad, saved['flatten_shape'])
+
+    grad = maxpool_backward(grad, saved['pool_mask2'], saved['pool_shape2'])
+    grad = relu_backward(grad, saved['relu_mask2'])
+    grad, dW_conv2 = conv2d_backward(grad, saved['patches2'], saved['shape2'], conv2_w)
+
+    grad = maxpool_backward(grad, saved['pool_mask1'], saved['pool_shape1'])
+    grad = relu_backward(grad, saved['relu_mask1'])
+    _, dW_conv1 = conv2d_backward(grad, saved['patches1'], saved['shape1'], conv1_w)
+
+    return dW_conv1, dW_conv2, dW_dense, db_dense
+
+# ============ Phase 9: Training Loop ============
+
+def train(x_train, y_train_oh, conv1_w, conv2_w, dense_w, dense_b,
+          epochs=5, batch_size=128, lr=0.001):
+    params = [conv1_w, conv2_w, dense_w, dense_b]
+    state = adam_init(params)
+    n = len(x_train)
+
+    for epoch in range(1, epochs + 1):
+        # shuffle
+        indices = np.random.permutation(n)
+        total_loss = 0
+        correct = 0
+
+        for batch_start in range(0, n, batch_size):
+            batch_end = min(batch_start + batch_size, n)
+            batch_idx = indices[batch_start:batch_end]
+            bs = len(batch_idx)
+
+            # accumulate gradients over batch
+            dW1_acc = np.zeros_like(conv1_w)
+            dW2_acc = np.zeros_like(conv2_w)
+            dWd_acc = np.zeros_like(dense_w)
+            dbd_acc = np.zeros_like(dense_b)
+
+            for idx in batch_idx:
+                pred, saved = full_forward(x_train[idx], conv1_w, conv2_w, dense_w, dense_b, training=True)
+
+                total_loss += cross_entropy_loss(pred, y_train_oh[idx])
+                if np.argmax(pred) == np.argmax(y_train_oh[idx]):
+                    correct += 1
+
+                dW1, dW2, dWd, dbd = full_backward(pred, y_train_oh[idx], saved, conv1_w, conv2_w, dense_w)
+                dW1_acc += dW1
+                dW2_acc += dW2
+                dWd_acc += dWd
+                dbd_acc += dbd
+
+            # average gradients over batch, then update
+            grads = [dW1_acc / bs, dW2_acc / bs, dWd_acc / bs, dbd_acc / bs]
+            adam_step(params, grads, state, lr=lr)
+
+            # progress
+            done = min(batch_end, n)
+            print(f"\rEpoch {epoch}/{epochs} - {done}/{n}", end="", flush=True)
+
+        avg_loss = total_loss / n
+        accuracy = correct / n
+        print(f"\rEpoch {epoch}/{epochs} - loss: {avg_loss:.4f} - accuracy: {accuracy:.4f}")
+
+# ============ Phase 10: Evaluation ============
+
+def evaluate(x_test, y_test_oh, conv1_w, conv2_w, dense_w, dense_b):
+    total_loss = 0
+    correct = 0
+    n = len(x_test)
+    for i in range(n):
+        pred, _ = full_forward(x_test[i], conv1_w, conv2_w, dense_w, dense_b, training=False)
+        total_loss += cross_entropy_loss(pred, y_test_oh[i])
+        if np.argmax(pred) == np.argmax(y_test_oh[i]):
+            correct += 1
+        if (i + 1) % 1000 == 0:
+            print(f"\rEvaluating: {i+1}/{n}", end="", flush=True)
+    print(f"\rTest loss: {total_loss/n:.4f} - Test accuracy: {correct/n:.4f}")
+
+# ============ Run ============
+
+print("Training on full MNIST (this will be slow — ~minutes per epoch)")
+print("Tip: reduce x_train[:1000] to test quickly\n")
 
 t0 = time.time()
-conv2d32_out = conv2d_forward(y_test,x_test,kernels_32)
+train(x_train, y_train_one_hot, conv1_w, conv2_w, dense_w, dense_b,
+      epochs=5, batch_size=128, lr=0.001)
 t1 = time.time()
-print(f"conv2d_forward: {t1 - t0:.3f}s")
+print(f"\nTraining time: {t1 - t0:.1f}s\n")
 
-normalized = relu(conv2d32_out)
-t2 = time.time()
-print(f"relu:           {t2 - t1:.3f}s")
-
-pooled = maxpooling2dbutfast(normalized)
-t3 = time.time()
-print(f"maxpooling2d:   {t3 - t2:.3f}s")
-
-t4 = time.time()
-conv2d64_out = conv2d_forward(y_test,pooled,kernels_64)
-t5 = time.time()
-print(f"conv2d_forward: {t5 - t4:.3f}s")
-
-normalized = relu(conv2d64_out)
-t6 = time.time()
-print(f"relu:           {t6 - t5:.3f}s")
-
-pooled = maxpooling2dbutfast(normalized)
-t7 = time.time()
-print(f"maxpooling2d:   {t7 - t6:.3f}s")
-
-# (64, 5, 5) -> (1600,) per image
-flattened = [flatten(img) for img in pooled]
-t8 = time.time()
-print(f"flatten:        {t8 - t7:.3f}s")
-
-# randomly zero out 50% of values, scale survivors
-dropped = [dropout(img) for img in flattened]
-t9 = time.time()
-print(f"dropout:        {t9 - t8:.3f}s")
-
-# (1600,) -> (10,) raw logits per image
-logits = [dense(img, dense_w, dense_b) for img in dropped]
-t10 = time.time()
-print(f"dense:          {t10 - t9:.3f}s")
-
-# (10,) -> (10,) probabilities per image
-predictions = [softmax(img) for img in logits]
-t11 = time.time()
-print(f"softmax:        {t11 - t10:.3f}s")
-
-# cross entropy loss per image, then average
-losses = [cross_entropy_loss(predictions[i], y_test_one_hot[i]) for i in range(len(predictions))]
-avg_loss = np.mean(losses)
-t12 = time.time()
-print(f"cross_entropy:  {t12 - t11:.3f}s")
-
-print(f"total:          {t12 - t0:.3f}s")
-
-# check output for first image
-print(f"\nprediction: {np.argmax(predictions[0])}, actual: {y_test[0]}")
-print(f"probabilities: {predictions[0]}")
-print(f"avg loss: {avg_loss:.4f}")
-
+evaluate(x_test, y_test_one_hot, conv1_w, conv2_w, dense_w, dense_b)
