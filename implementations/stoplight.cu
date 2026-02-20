@@ -6,7 +6,10 @@ __global__ void multiply_by_two(int *val) {
     s_val *= 2;
     *val = s_val;
 }
-
+//threadIdx.x   // thread index within its block (0 to blockDim.x - 1)
+//blockIdx.x    // which block this thread is in (0 to gridDim.x - 1)
+//blockDim.x    // how many threads per block
+//gridDim.x     // how many blocks total
 
 __global__ void learn(double *streetlights, double *walkstop, double *weights_0, double *weights_1) {
     __shared__ double s_streetlights[4][3];
@@ -14,18 +17,18 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
     __shared__ double s_weights_0[3][4];
     __shared__ double s_weights_1[4];
 
-    for (int i = 0; i < 4; i++)
-        for (int j = 0; j < 3; j++)
-            s_streetlights[i][j] = streetlights[i*3+j];
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-    for (int i = 0; i < 4; i++)
+    if (i < 12)
+        s_streetlights[i/3][i%3] = streetlights[i];
+
+    if (i < 4)
         s_walkstop[i] = walkstop[i];
 
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 4; j++)
-            s_weights_0[i][j] = weights_0[i*4+j];
+    if (i < 12)
+        s_weights_0[i/4][i%4] = weights_0[i];
 
-    for (int i = 0; i < 4; i++)
+    if (i < 4)
         s_weights_1[i] = weights_1[i];
 
     __syncthreads();
@@ -86,7 +89,8 @@ int main() {
     err = cudaMemcpy(walkstop_d, &walkstop, 4*sizeof(double), cudaMemcpyHostToDevice);
     if (err != cudaSuccess) { printf("memcpy H2D: %s\n", cudaGetErrorString(err)); return 1; }
 
-    double *weights_0_h = malloc(12 * sizeof(double));
+    //unlike C you have to cast this to double *
+    double *weights_0_h = (double*)malloc(12 * sizeof(double));
 
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 4; j++) {
@@ -97,7 +101,7 @@ int main() {
     };
 
 
-    double *weights_1_h = malloc(4 * sizeof(double));
+    double *weights_1_h = (double*)malloc(4 * sizeof(double));
 
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 1; j++) {
@@ -122,7 +126,7 @@ int main() {
     err = cudaMemcpy(weights_1_d, weights_1_h, 4*sizeof(double), cudaMemcpyHostToDevice);
     if (err != cudaSuccess) { printf("memcpy H2D: %s\n", cudaGetErrorString(err)); return 1; }
 
-
+    learn<<<1,16>>>(streetlights_d,walkstop_d,weights_0_d,weights_1_d);
 
     return 0;
 }
