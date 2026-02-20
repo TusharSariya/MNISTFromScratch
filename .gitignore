@@ -7,3 +7,4 @@ data/
 pyinstrument.txt
 
 stoplight
+stoplight_cuda

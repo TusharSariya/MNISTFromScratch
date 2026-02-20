@@ -19,7 +19,10 @@ implementations/
 ├── keras_mnist.py        # High-level Keras implementation (~48 lines)
 ├── pytorch_mnist.py      # Explicit PyTorch implementation (~75 lines)
 ├── conv2d.py             # Naive conv2d forward pass with nested loops
-└── conv2dim2col.py       # Conv2d using im2col + matmul
+├── conv2dim2col.py       # Conv2d using im2col + matmul
+├── stoplight.py          # Toy 2-layer network in numpy (streetlight walk/stop)
+├── stoplight.c           # Same network in C with manual matmul
+└── stoplight.cu          # CUDA boilerplate (multiply-by-two kernel)
 
 docs/
 ├── layers/               # What each layer does (math, shapes, forward pass)
@@ -57,3 +60,20 @@ python implementations/keras_mnist.py      # high-level baseline
 python implementations/pytorch_mnist.py    # explicit baseline
 python implementations/conv2dim2col.py     # numpy im2col implementation
 ```
+
+### Stoplight (toy network)
+
+```bash
+# Python
+python implementations/stoplight.py
+
+# C
+gcc -O2 -o stoplight implementations/stoplight.c -lm
+./stoplight
+
+# CUDA (requires nvcc)
+nvcc -o stoplight_cuda implementations/stoplight.cu
+./stoplight_cuda
+```
+
+Both `stoplight.py` and `stoplight.c` print per-iteration timing percentiles (p50/p90/p99) after training. See `docs/benchmarking_tips.md` for how to get stable results and `docs/stoplight-c.md` for build/debug details.
