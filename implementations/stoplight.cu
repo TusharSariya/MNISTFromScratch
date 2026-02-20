@@ -9,10 +9,26 @@ __global__ void multiply_by_two(int *val) {
 
 
 __global__ void learn(double *streetlights, double *walkstop, double *weights_0, double *weights_1) {
-    __shared__ double streetlights[4][3];
-    __shared__ double walkstop[4][1];
-    __shared__ double weights_0[4][3]; 
-    __shared__ double weights_1[4][1];
+    __shared__ double s_streetlights[4][3];
+    __shared__ double s_walkstop[4];
+    __shared__ double s_weights_0[3][4];
+    __shared__ double s_weights_1[4];
+
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 3; j++)
+            s_streetlights[i][j] = streetlights[i*3+j];
+
+    for (int i = 0; i < 4; i++)
+        s_walkstop[i] = walkstop[i];
+
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 4; j++)
+            s_weights_0[i][j] = weights_0[i*4+j];
+
+    for (int i = 0; i < 4; i++)
+        s_weights_1[i] = weights_1[i];
+
+    __syncthreads();
 }
 
 int main() {
