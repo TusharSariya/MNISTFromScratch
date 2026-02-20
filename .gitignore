@@ -5,3 +5,5 @@ data/
 *.prof
 *.svg
 pyinstrument.txt
+
+stoplight

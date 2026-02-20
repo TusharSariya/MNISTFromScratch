@@ -1,4 +1,5 @@
 import numpy as np
+import time
 
 
 np.random.seed(1) #seed random
@@ -48,8 +49,10 @@ def weight(weight,derrevative, alpha=0.1):
 
 err = np.ones((4,1)) * 999
 idx = 0
+iter_times = []
 
 while err.mean() > 0.001 and idx < 1000:
+    iter_start = time.perf_counter()
     idx += 1
     #--------------------------------------------------------
     #forwards pass
@@ -100,3 +103,16 @@ while err.mean() > 0.001 and idx < 1000:
     weights_0_new = weight(weights_0,derr_0)
     weights_1 = weights_1_new
     weights_0 = weights_0_new
+
+    iter_times.append(time.perf_counter() - iter_start)
+
+def percentile(data, p):
+    sorted_data = sorted(data)
+    idx = (p / 100) * (len(sorted_data) - 1)
+    lo, hi = int(idx), min(int(idx) + 1, len(sorted_data) - 1)
+    return sorted_data[lo] + (idx - lo) * (sorted_data[hi] - sorted_data[lo])
+
+print(f"\n--- iteration time percentiles ({len(iter_times)} iters) ---")
+print(f"p50: {percentile(iter_times, 50)*1e6:.2f} us")
+print(f"p90: {percentile(iter_times, 90)*1e6:.2f} us")
+print(f"p99: {percentile(iter_times, 99)*1e6:.2f} us")

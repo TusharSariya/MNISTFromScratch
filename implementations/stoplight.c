@@ -3,6 +3,25 @@
 #include <time.h>
 #include <string.h>
 
+static double now_us() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
+}
+
+static int cmp_double(const void *a, const void *b) {
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    return (da > db) - (da < db);
+}
+
+static double percentile(double *sorted, int n, double p) {
+    double idx = (p / 100.0) * (n - 1);
+    int lo = (int)idx;
+    int hi = lo + 1 < n ? lo + 1 : lo;
+    return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
+}
+
 
 // returns 1.0 where arr > 0, else 0.0 — used in backprop
 double *relu_deriv(double *arr, int y, int x) {
@@ -153,8 +172,10 @@ int main() {
     };
 
     int idx = 0;
+    double iter_times[1000];
 
     for(idx; idx < 1000; idx++) {
+        double iter_start = now_us();
         // 4X3 and 3X4 -> 4X4
         double* output_0 = matmul(streetlights_h,weights_0_h,4,3,4);
 
@@ -169,8 +190,10 @@ int main() {
         double sum = 0;
         for (int i = 0; i < 4; i++)
             sum += err[i];
-        printf("mean error: %f\n", sum / 4.0);
+        printf("iter %d, error: %.4f\n", idx + 1, sum / 4.0);
         if(sum/4.0 < 0.01 && idx % 20 == 0) {
+            iter_times[idx] = now_us() - iter_start;
+            idx++;
             break;
         }
 
@@ -212,7 +235,16 @@ int main() {
 
         free(weights_1_h);
         weights_1_h = weight_1_new;
+
+        iter_times[idx] = now_us() - iter_start;
     }
+
+    int n_iters = idx;
+    qsort(iter_times, n_iters, sizeof(double), cmp_double);
+    printf("\n--- iteration time percentiles (%d iters) ---\n", n_iters);
+    printf("p50: %.2f us\n", percentile(iter_times, n_iters, 50));
+    printf("p90: %.2f us\n", percentile(iter_times, n_iters, 90));
+    printf("p99: %.2f us\n", percentile(iter_times, n_iters, 99));
 
     
 
