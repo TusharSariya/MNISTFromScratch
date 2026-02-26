@@ -16,6 +16,25 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
     __shared__ double s_walkstop[4];
     __shared__ double s_weights_0[3][4];
     __shared__ double s_weights_1[4];
+    __shared__ double s_weights_1_new[4];
+
+    __shared__ double s_output_0[4][4];
+
+    __shared__ double prediction[4][1];
+
+    __shared__ double relu_output_0_T[4][4];
+
+    __shared__ double delta_1[4][1];
+
+    __shared__ double error_1[4][1];
+
+    __shared__ double error_0[3][4];
+
+    __shared__ double delta_0[4][4];
+
+    __shared__ double relu_mask[4][4];
+
+    __shared__ int done;
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -32,6 +51,94 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
         s_weights_1[i] = weights_1[i];
 
     __syncthreads();
+
+    int row_0 = i / 4;
+    int col_0 = i % 4;
+
+    ///forward pass
+
+
+    //mat mul 4X3 and 3X4 -> 4X4
+    for(int idx = 0; idx < 1000; idx++) {
+        int total = 0;
+        for (int j = 0; j < 3; j++) {
+            total += s_streetlights[row_0][j]*s_weights_0[j][col_0];
+        }
+        s_output_0[row_0][col_0] = total;
+
+        //relu 
+        s_output_0[row_0][col_0] = max(s_output_0[row_0][col_0],0.0);
+
+        //mat mul 4X4 and 4X1 -> 4X1
+        if (i < 4) {
+            prediction[i][0] = 0;
+            for (int k = 0; k < 4; k++) {
+                prediction[i][0] += s_output_0[i][k] * s_weights_1[k];
+            };
+        }
+
+        __syncthreads(); 
+        //error
+        done = 0;
+        int sum = 0;
+        if (i == 0) {
+            for (int l = 0; l < 4; l++) {
+                sum += prediction[l][0];
+            }
+            printf("iter %d, error: %.4f\n", idx + 1, sum / 4.0);
+            if(sum/4.0 < 0.01 && idx % 20 == 0) {
+                done = 1;
+            }
+        }
+        __syncthreads(); 
+        if(done) break;
+
+
+        ///backprop
+
+        //transpose
+        relu_output_0_T[col_0][row_0] = s_output_0[row_0][col_0];
+
+        if (i < 4) {
+            delta_1[i][0] = prediction[i][0] - s_walkstop[i];
+        }
+
+        if (i < 4) {
+            //mat mul 4X4 and 4X1 -> 4X1 and scale
+            error_1[i][0] = 0;
+            for (int k = 0; k < 4; k++) {
+                error_1[i][0] += relu_output_0_T[i][k] * delta_1[k][0] * 0.1;
+            };
+            s_weights_1_new[i] = s_weights_1[i] - error_1[i][0];
+        }
+        
+        // 4X1 and 1X4 (but fake because its not worth it) -> 4X4
+        delta_0[row_0][col_0] = delta_1[row_0][0]*s_weights_1[col_0];
+
+        relu_mask[row_0][col_0] = s_output_0[row_0][col_0] > 0 ? 1.0 : 0.0;
+
+        delta_0[row_0][col_0]= delta_0[row_0][col_0]*relu_mask[row_0][col_0];
+
+        __syncthreads(); 
+
+        if (i < 12) {
+            error_0[row_0][col_0] = 0;
+            for (int j = 0; j < 4; j++) {
+                //3X4 (fake the transpose) and 4X4 -> 3X4
+                error_0[row_0][col_0] += s_streetlights[j][row_0]*delta_0[j][col_0]*0.1;
+            }
+            s_weights_0[row_0][col_0] = s_weights_0[row_0][col_0] - error_0[row_0][col_0];
+        }
+        if (i < 4) {
+            s_weights_1[i] = s_weights_1_new[i];
+        }
+
+        __syncthreads(); 
+
+    }
+
+
+
 }
 
 int main() {
@@ -127,6 +234,8 @@ int main() {
     if (err != cudaSuccess) { printf("memcpy H2D: %s\n", cudaGetErrorString(err)); return 1; }
 
     learn<<<1,16>>>(streetlights_d,walkstop_d,weights_0_d,weights_1_d);
+
+    cudaDeviceSynchronize();
 
     return 0;
 }
