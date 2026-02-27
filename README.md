@@ -22,7 +22,9 @@ implementations/
 ├── conv2dim2col.py       # Conv2d using im2col + matmul
 ├── stoplight.py          # Toy 2-layer network in numpy (streetlight walk/stop)
 ├── stoplight.c           # Same network in C with manual matmul
-└── stoplight.cu          # CUDA boilerplate (multiply-by-two kernel)
+└── stoplight.cu          # Same network in CUDA (forward + backprop, timing)
+
+stoplight_results.md     # Benchmark results: stoplight.py vs stoplight.c vs stoplight.cu
 
 docs/
 ├── layers/               # What each layer does (math, shapes, forward pass)
@@ -76,7 +78,7 @@ nvcc -o stoplight_cuda implementations/stoplight.cu
 ./stoplight_cuda
 ```
 
-Both `stoplight.py` and `stoplight.c` print per-iteration timing percentiles (p50/p90/p99) after training. See `docs/benchmarking_tips.md` for how to get stable results and `docs/stoplight-c.md` for build/debug details.
+All three print per-iteration timing percentiles (p50/p90/p99) after training. See [stoplight_results.md](stoplight_results.md) for benchmark comparisons and `docs/benchmarking_tips.md` for stable results; `docs/stoplight-c.md` for C build/debug details.
 
 ### Profiling CUDA (Nsight)
 
