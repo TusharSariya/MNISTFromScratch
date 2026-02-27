@@ -1,6 +1,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <time.h>
+#include <cuda_runtime.h>
+
+static int cmp_double(const void *a, const void *b) {
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    return (da > db) - (da < db);
+}
+
+static double percentile(double *sorted, int n, double p) {
+    double idx = (p / 100.0) * (n - 1);
+    int lo = (int)idx;
+    int hi = lo + 1 < n ? lo + 1 : lo;
+    return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
+}
 
 __global__ void multiply_by_two(int *val) {
     __shared__ int s_val;
@@ -13,7 +28,7 @@ __global__ void multiply_by_two(int *val) {
 //blockDim.x    // how many threads per block
 //gridDim.x     // how many blocks total
 
-__global__ void learn(double *streetlights, double *walkstop, double *weights_0, double *weights_1) {
+__global__ void learn(double *streetlights, double *walkstop, double *weights_0, double *weights_1, double *iter_times_us, int *n_iters, double clock_rate_khz) {
     __shared__ double s_streetlights[4][3];
     __shared__ double s_walkstop[4];
     __shared__ double s_weights_0[3][4];
@@ -62,6 +77,12 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
 
     //mat mul 4X3 and 3X4 -> 4X4
     for(int idx = 0; idx < 1000; idx++) {
+        unsigned long long iter_start = 0;
+        if (i == 0) {
+            iter_start = clock64();
+        }
+        __syncthreads();
+
         double total = 0.0;
         for (int j = 0; j < 3; j++) {
             total += s_streetlights[row_0][j]*s_weights_0[j][col_0];
@@ -90,12 +111,11 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
             }
             double mse = sum / 4.0;
             printf("iter %d, error: %.4f\n", idx + 1, mse);
-            if(mse < 0.01 && idx % 20 == 0) {
+            if(mse < 0.001) {
                 done = 1;
             }
         }
         __syncthreads(); 
-        if(done) break;
 
 
         ///backprop
@@ -139,6 +159,15 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
 
         __syncthreads(); 
 
+        if (i == 0) {
+            unsigned long long iter_end = clock64();
+            // clockRate is in kHz (cycles/ms), convert to microseconds.
+            iter_times_us[idx] = ((double)(iter_end - iter_start) * 1000.0) / clock_rate_khz;
+            *n_iters = idx + 1;
+        }
+        __syncthreads();
+        if(done) break;
+
     }
 
 
@@ -146,6 +175,7 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
 }
 
 int main() {
+    srand(1);
     int host_val = 21;
     int *device_val;
     cudaError_t err;
@@ -224,6 +254,8 @@ int main() {
 
     double *weights_0_d;
     double *weights_1_d;
+    double *iter_times_us_d;
+    int *n_iters_d;
 
     err = cudaMalloc(&weights_0_d,12*sizeof(double));
     if (err != cudaSuccess) { printf("cudaMalloc: %s\n", cudaGetErrorString(err)); return 1; }
@@ -237,18 +269,50 @@ int main() {
     err = cudaMemcpy(weights_1_d, weights_1_h, 4*sizeof(double), cudaMemcpyHostToDevice);
     if (err != cudaSuccess) { printf("memcpy H2D: %s\n", cudaGetErrorString(err)); return 1; }
 
-    learn<<<1,16>>>(streetlights_d,walkstop_d,weights_0_d,weights_1_d);
+    err = cudaMalloc(&iter_times_us_d, 1000 * sizeof(double));
+    if (err != cudaSuccess) { printf("cudaMalloc: %s\n", cudaGetErrorString(err)); return 1; }
+
+    err = cudaMalloc(&n_iters_d, sizeof(int));
+    if (err != cudaSuccess) { printf("cudaMalloc: %s\n", cudaGetErrorString(err)); return 1; }
+
+    int n_iters_h = 0;
+    err = cudaMemcpy(n_iters_d, &n_iters_h, sizeof(int), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) { printf("memcpy H2D: %s\n", cudaGetErrorString(err)); return 1; }
+
+    int clock_rate_khz = 0;
+    err = cudaDeviceGetAttribute(&clock_rate_khz, cudaDevAttrClockRate, 0);
+    if (err != cudaSuccess) { printf("device attr: %s\n", cudaGetErrorString(err)); return 1; }
+
+    learn<<<1,16>>>(streetlights_d,walkstop_d,weights_0_d,weights_1_d,iter_times_us_d,n_iters_d,(double)clock_rate_khz);
     err = cudaGetLastError();
     if (err != cudaSuccess) { printf("learn launch: %s\n", cudaGetErrorString(err)); return 1; }
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) { printf("learn sync: %s\n", cudaGetErrorString(err)); return 1; }
 
+    double *iter_times_us_h = (double*)malloc(1000 * sizeof(double));
+    if (iter_times_us_h == NULL) { printf("malloc failed\n"); return 1; }
+
+    err = cudaMemcpy(&n_iters_h, n_iters_d, sizeof(int), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) { printf("memcpy D2H: %s\n", cudaGetErrorString(err)); return 1; }
+
+    err = cudaMemcpy(iter_times_us_h, iter_times_us_d, 1000*sizeof(double), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) { printf("memcpy D2H: %s\n", cudaGetErrorString(err)); return 1; }
+
+    qsort(iter_times_us_h, n_iters_h, sizeof(double), cmp_double);
+    printf("\n--- iteration time percentiles (%d iters) ---\n", n_iters_h);
+    printf("p50: %.2f us\n", percentile(iter_times_us_h, n_iters_h, 50));
+    printf("p90: %.2f us\n", percentile(iter_times_us_h, n_iters_h, 90));
+    printf("p99: %.2f us\n", percentile(iter_times_us_h, n_iters_h, 99));
+
     free(weights_0_h);
     free(weights_1_h);
+    free(iter_times_us_h);
     cudaFree(streetlights_d);
     cudaFree(walkstop_d);
     cudaFree(weights_0_d);
     cudaFree(weights_1_d);
+    cudaFree(iter_times_us_d);
+    cudaFree(n_iters_d);
 
     return 0;
 }

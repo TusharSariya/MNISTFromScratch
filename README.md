@@ -77,3 +77,25 @@ nvcc -o stoplight_cuda implementations/stoplight.cu
 ```
 
 Both `stoplight.py` and `stoplight.c` print per-iteration timing percentiles (p50/p90/p99) after training. See `docs/benchmarking_tips.md` for how to get stable results and `docs/stoplight-c.md` for build/debug details.
+
+### Profiling CUDA (Nsight)
+
+You can profile the CUDA binary with **Nsight Systems** (timeline) and **Nsight Compute** (kernel-level metrics). Both require an NVIDIA GPU and the Nsight tools (from the CUDA toolkit or standalone install).
+
+| Tool | Use for |
+|------|--------|
+| **Nsight Systems** | Where time is spent (CPU/GPU timeline), kernel launches, memory transfers, API/sync behavior |
+| **Nsight Compute** | Why a kernel is slow: occupancy, memory throughput, warp utilization, etc. |
+
+```bash
+# Timeline profile (creates stoplight_report.nsys-rep)
+nsys profile -o stoplight_report ./stoplight_cuda
+
+# Kernel-level profile (creates stoplight_ncu.ncu-rep)
+ncu -o stoplight_ncu ./stoplight_cuda
+
+# Quick kernel summary without GUI
+ncu --print-summary per-kernel ./stoplight_cuda
+```
+
+Open `.nsys-rep` in the Nsight Systems GUI and `.ncu-rep` in the Nsight Compute GUI. The `learn` kernel uses a single block of 16 threads, so occupancy is low and launch overhead dominates; the tools still work for learning and for larger kernels later.
