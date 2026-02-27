@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
 
 __global__ void multiply_by_two(int *val) {
     __shared__ int s_val;
@@ -60,14 +62,14 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
 
     //mat mul 4X3 and 3X4 -> 4X4
     for(int idx = 0; idx < 1000; idx++) {
-        int total = 0;
+        double total = 0.0;
         for (int j = 0; j < 3; j++) {
             total += s_streetlights[row_0][j]*s_weights_0[j][col_0];
         }
         s_output_0[row_0][col_0] = total;
 
         //relu 
-        s_output_0[row_0][col_0] = max(s_output_0[row_0][col_0],0.0);
+        s_output_0[row_0][col_0] = fmax(s_output_0[row_0][col_0],0.0);
 
         //mat mul 4X4 and 4X1 -> 4X1
         if (i < 4) {
@@ -78,15 +80,17 @@ __global__ void learn(double *streetlights, double *walkstop, double *weights_0,
         }
 
         __syncthreads(); 
-        //error
+        //error (MSE)
         done = 0;
-        int sum = 0;
+        double sum = 0.0;
         if (i == 0) {
             for (int l = 0; l < 4; l++) {
-                sum += prediction[l][0];
+                double diff = prediction[l][0] - s_walkstop[l];
+                sum += diff * diff;
             }
-            printf("iter %d, error: %.4f\n", idx + 1, sum / 4.0);
-            if(sum/4.0 < 0.01 && idx % 20 == 0) {
+            double mse = sum / 4.0;
+            printf("iter %d, error: %.4f\n", idx + 1, mse);
+            if(mse < 0.01 && idx % 20 == 0) {
                 done = 1;
             }
         }
@@ -234,8 +238,17 @@ int main() {
     if (err != cudaSuccess) { printf("memcpy H2D: %s\n", cudaGetErrorString(err)); return 1; }
 
     learn<<<1,16>>>(streetlights_d,walkstop_d,weights_0_d,weights_1_d);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) { printf("learn launch: %s\n", cudaGetErrorString(err)); return 1; }
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) { printf("learn sync: %s\n", cudaGetErrorString(err)); return 1; }
 
-    cudaDeviceSynchronize();
+    free(weights_0_h);
+    free(weights_1_h);
+    cudaFree(streetlights_d);
+    cudaFree(walkstop_d);
+    cudaFree(weights_0_d);
+    cudaFree(weights_1_d);
 
     return 0;
 }
